@@ -1,0 +1,375 @@
+[
+  {
+    "id": "flow_api",
+    "type": "tab",
+    "label": "IoT REST API",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "mqtt_broker_config",
+    "type": "mqtt-broker",
+    "name": "Local Mosquitto",
+    "broker": "localhost",
+    "port": "1883",
+    "clientid": "node-red-backend",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true
+  },
+  {
+    "id": "ws_listener",
+    "type": "websocket-listener",
+    "path": "/ws/sensor",
+    "wholemsg": "false"
+  },
+  {
+    "id": "mqtt_sensor_in",
+    "type": "mqtt in",
+    "z": "flow_api",
+    "name": "Subscribe Sensor",
+    "topic": "iot/sensor",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "mqtt_broker_config",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 0,
+    "x": 160,
+    "y": 80,
+    "wires": [
+      [
+        "store_sensor"
+      ]
+    ]
+  },
+  {
+    "id": "store_sensor",
+    "type": "function",
+    "z": "flow_api",
+    "name": "Simpan Data Sensor",
+    "func": "// Parse, simpan data terakhir + riwayat (maks 50), siapkan payload WebSocket\nlet data = msg.payload;\nif (typeof data === 'string') {\n    try { data = JSON.parse(data); }\n    catch (e) { node.error('Payload sensor bukan JSON valid', msg); return null; }\n}\nif (typeof data !== 'object' || data === null) return null;\n\ndata.received = new Date().toISOString();\nflow.set('lastSensor', data);\n\nlet history = flow.get('history') || [];\nhistory.push(data);\nif (history.length > 50) history = history.slice(-50);\nflow.set('history', history);\n\n// Evaluasi threshold (default 30 jika belum pernah diset)\nconst threshold = flow.get('threshold');\nconst maxSuhu = (typeof threshold === 'number') ? threshold : 30;\nconst alert = (typeof data.suhu === 'number') && data.suhu > maxSuhu;\nif (alert) node.warn('ALERT: suhu ' + data.suhu + ' melebihi batas ' + maxSuhu);\n\nmsg.payload = Object.assign({}, data, {alert: alert, threshold: maxSuhu});\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 390,
+    "y": 80,
+    "wires": [
+      [
+        "debug_sensor",
+        "ws_out_sensor",
+        "sqlite_prep"
+      ]
+    ]
+  },
+  {
+    "id": "debug_sensor",
+    "type": "debug",
+    "z": "flow_api",
+    "name": "Log Sensor",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 640,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "ws_out_sensor",
+    "type": "websocket out",
+    "z": "flow_api",
+    "name": "WS /ws/sensor",
+    "server": "ws_listener",
+    "client": "",
+    "x": 650,
+    "y": 80,
+    "wires": []
+  },
+  {
+    "id": "sqlite_prep",
+    "type": "function",
+    "z": "flow_api",
+    "name": "Siapkan INSERT SQLite (opsional)",
+    "func": "// OPSIONAL (node dinonaktifkan): siapkan INSERT untuk node-red-node-sqlite\n// Hubungkan input dari 'Simpan Data Sensor' dan output ke node 'sqlite' (mode: Via msg.topic)\nconst d = msg.payload;\nmsg.topic = 'INSERT INTO sensor_history (suhu, kelembaban, ts, received) VALUES ($suhu, $kelembaban, $ts, $received)';\nmsg.payload = {$suhu: d.suhu, $kelembaban: d.kelembaban, $ts: d.timestamp, $received: d.received};\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 680,
+    "y": 130,
+    "wires": [
+      []
+    ],
+    "d": true
+  },
+  {
+    "id": "note_sqlite",
+    "type": "comment",
+    "z": "flow_api",
+    "name": "Catatan: alternatif SQLite",
+    "x": 190,
+    "y": 130,
+    "wires": [],
+    "info": "Alternatif flow context: npm i node-red-node-sqlite (di ~/.node-red), restart.\n\n1. Tambah node 'sqlite' (database: iot.db, SQL Query: Via msg.topic).\n2. Jalankan sekali (inject): CREATE TABLE IF NOT EXISTS sensor_history (id INTEGER PRIMARY KEY AUTOINCREMENT, suhu REAL, kelembaban REAL, ts TEXT, received TEXT);\n3. Aktifkan node 'Siapkan INSERT SQLite' lalu sambungkan ke node sqlite.\n4. Untuk GET /api/history, ganti sumber data dengan query:\nSELECT suhu, kelembaban, ts AS timestamp, received FROM (SELECT * FROM sensor_history ORDER BY id DESC LIMIT 50) ORDER BY id ASC;"
+  },
+  {
+    "id": "http_get_suhu",
+    "type": "http in",
+    "z": "flow_api",
+    "name": "GET /api/suhu",
+    "url": "/api/suhu",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 240,
+    "wires": [
+      [
+        "api_auth"
+      ]
+    ]
+  },
+  {
+    "id": "http_get_history",
+    "type": "http in",
+    "z": "flow_api",
+    "name": "GET /api/history",
+    "url": "/api/history",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 290,
+    "wires": [
+      [
+        "api_auth"
+      ]
+    ]
+  },
+  {
+    "id": "http_post_kontrol",
+    "type": "http in",
+    "z": "flow_api",
+    "name": "POST /api/kontrol",
+    "url": "/api/kontrol",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 340,
+    "wires": [
+      [
+        "api_auth"
+      ]
+    ]
+  },
+  {
+    "id": "http_put_threshold",
+    "type": "http in",
+    "z": "flow_api",
+    "name": "PUT /api/threshold",
+    "url": "/api/threshold",
+    "method": "put",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 390,
+    "wires": [
+      [
+        "api_auth"
+      ]
+    ]
+  },
+  {
+    "id": "api_auth",
+    "type": "function",
+    "z": "flow_api",
+    "name": "Auth X-API-Key & Router",
+    "func": "// Autentikasi X-API-Key + router sederhana untuk semua /api/*\nconst VALID_KEY = 'rahasia123';\nmsg.headers = {'Access-Control-Allow-Origin': '*'};\n\nconst key = msg.req.headers['x-api-key'];\nif (key !== VALID_KEY) {\n    msg.statusCode = 401;\n    msg.payload = {status: 'error', message: 'Unauthorized: X-API-Key salah atau kosong'};\n    return [msg, null, null, null, null];\n}\n\nconst method = msg.req.method;\nconst path = (msg.req.path || msg.req.url.split('?')[0]).replace(/\\/+$/, '');\n\nif (method === 'GET'  && path === '/api/suhu')      return [null, msg, null, null, null];\nif (method === 'GET'  && path === '/api/history')   return [null, null, msg, null, null];\nif (method === 'POST' && path === '/api/kontrol')   return [null, null, null, msg, null];\nif (method === 'PUT'  && path === '/api/threshold') return [null, null, null, null, msg];\n\nmsg.statusCode = 404;\nmsg.payload = {status: 'error', message: 'Endpoint tidak ditemukan'};\nreturn [msg, null, null, null, null];",
+    "outputs": 5,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 410,
+    "y": 315,
+    "wires": [
+      [
+        "http_resp"
+      ],
+      [
+        "resp_suhu"
+      ],
+      [
+        "resp_history"
+      ],
+      [
+        "proc_kontrol"
+      ],
+      [
+        "proc_threshold"
+      ]
+    ]
+  },
+  {
+    "id": "resp_suhu",
+    "type": "function",
+    "z": "flow_api",
+    "name": "Response Suhu",
+    "func": "const data = flow.get('lastSensor') || {suhu: null, kelembaban: null, timestamp: null};\nconst threshold = flow.get('threshold');\nconst maxSuhu = (typeof threshold === 'number') ? threshold : 30;\nmsg.statusCode = 200;\nmsg.payload = {\n    status: 'success',\n    data: data,\n    alert: (typeof data.suhu === 'number') && data.suhu > maxSuhu,\n    threshold: maxSuhu,\n    server_time: new Date().toISOString()\n};\nmsg.headers = {'Access-Control-Allow-Origin': '*'};\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 680,
+    "y": 240,
+    "wires": [
+      [
+        "http_resp"
+      ]
+    ]
+  },
+  {
+    "id": "resp_history",
+    "type": "function",
+    "z": "flow_api",
+    "name": "Response History",
+    "func": "const history = (flow.get('history') || []).slice(-50);\nmsg.statusCode = 200;\nmsg.payload = {status: 'success', count: history.length, data: history};\nmsg.headers = {'Access-Control-Allow-Origin': '*'};\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 680,
+    "y": 290,
+    "wires": [
+      [
+        "http_resp"
+      ]
+    ]
+  },
+  {
+    "id": "proc_kontrol",
+    "type": "function",
+    "z": "flow_api",
+    "name": "Validasi & Publish Kontrol",
+    "func": "const body = msg.payload;\nmsg.headers = {'Access-Control-Allow-Origin': '*'};\n\nif (!body || typeof body !== 'object' ||\n    typeof body.device !== 'string' || !body.device.trim() ||\n    typeof body.action !== 'string' || !body.action.trim()) {\n    msg.statusCode = 400;\n    msg.payload = {status: 'error', message: 'device dan action wajib diisi (string)'};\n    return [msg, null];\n}\n\nconst cmd = {device: body.device.trim(), action: body.action.trim(), sent_at: new Date().toISOString()};\nconst mqttMsg = {topic: 'iot/kontrol', payload: cmd, qos: 0, retain: false};\n\nmsg.statusCode = 200;\nmsg.payload = {status: 'success', message: 'Perintah terkirim', sent: cmd};\nreturn [msg, mqttMsg];",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 690,
+    "y": 340,
+    "wires": [
+      [
+        "http_resp"
+      ],
+      [
+        "mqtt_publish_kontrol"
+      ]
+    ]
+  },
+  {
+    "id": "proc_threshold",
+    "type": "function",
+    "z": "flow_api",
+    "name": "Simpan Threshold",
+    "func": "const body = msg.payload;\nmsg.headers = {'Access-Control-Allow-Origin': '*'};\nconst v = (body && body.max_suhu !== undefined && body.max_suhu !== '') ? Number(body.max_suhu) : NaN;\n\nif (!isFinite(v)) {\n    msg.statusCode = 400;\n    msg.payload = {status: 'error', message: 'max_suhu wajib berupa angka'};\n    return msg;\n}\nflow.set('threshold', v);\nmsg.statusCode = 200;\nmsg.payload = {status: 'success', message: 'Threshold disimpan', max_suhu: v};\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 680,
+    "y": 400,
+    "wires": [
+      [
+        "http_resp"
+      ]
+    ]
+  },
+  {
+    "id": "mqtt_publish_kontrol",
+    "type": "mqtt out",
+    "z": "flow_api",
+    "name": "Publish iot/kontrol",
+    "topic": "iot/kontrol",
+    "qos": "0",
+    "retain": "false",
+    "respTopic": "",
+    "contentType": "",
+    "userProps": "",
+    "correl": "",
+    "expiry": "",
+    "broker": "mqtt_broker_config",
+    "x": 960,
+    "y": 360,
+    "wires": []
+  },
+  {
+    "id": "http_resp",
+    "type": "http response",
+    "z": "flow_api",
+    "name": "HTTP Response",
+    "statusCode": "",
+    "headers": {},
+    "x": 960,
+    "y": 300,
+    "wires": []
+  },
+  {
+    "id": "http_cors",
+    "type": "http in",
+    "z": "flow_api",
+    "name": "OPTIONS /api/*",
+    "url": "/api/*",
+    "method": "options",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 480,
+    "wires": [
+      [
+        "cors_resp"
+      ]
+    ]
+  },
+  {
+    "id": "cors_resp",
+    "type": "function",
+    "z": "flow_api",
+    "name": "CORS Headers (204)",
+    "func": "msg.statusCode = 204;\nmsg.payload = '';\nmsg.headers = {\n    'Access-Control-Allow-Origin': '*',\n    'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',\n    'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',\n    'Access-Control-Max-Age': '86400'\n};\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 410,
+    "y": 480,
+    "wires": [
+      [
+        "http_resp"
+      ]
+    ]
+  }
+]
